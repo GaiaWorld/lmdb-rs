@@ -31,6 +31,8 @@ pub use transaction::{
     Transaction,
 };
 
+pub use ::ffi::{mdb_set_compare, MDB_txn, MDB_dbi, MDB_val, MDB_cmp_func};
+
 macro_rules! lmdb_try {
     ($expr:expr) => ({
         match $expr {
