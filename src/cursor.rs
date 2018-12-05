@@ -52,6 +52,20 @@ pub trait Cursor<'txn> {
         Iter::new(self.cursor(), ffi::MDB_FIRST, ffi::MDB_NEXT)
     }
 
+    /// Iterate over database items from last item to the beginning
+    fn iter_end(&mut self) -> Iter<'txn> {
+        Iter::new(self.cursor(), ffi::MDB_LAST, ffi::MDB_PREV)
+    }
+
+    /// Iterate items with direction
+    fn iter_items_with_direction(&mut self, descending: bool) -> Iter<'txn> {
+        if descending {
+            self.iter_start()
+        } else {
+            self.iter_end()
+        }
+    }
+
     /// Iterate over database items starting from the given key.
     ///
     /// For databases with duplicate data items (`DatabaseFlags::DUP_SORT`), the
@@ -63,6 +77,19 @@ pub trait Cursor<'txn> {
             Err(error) => panic!("mdb_cursor_get returned an unexpected error: {}", error),
         };
         Iter::new(self.cursor(), ffi::MDB_GET_CURRENT, ffi::MDB_NEXT)
+    }
+
+    /// Iterate over database items starting from the given key with direction.
+    fn iter_from_with_direction<K>(&mut self, key: K, descending: bool) -> Iter<'txn> where K: AsRef<[u8]> {
+        match self.get(Some(key.as_ref()), None, ffi::MDB_SET_RANGE) {
+            Ok(_) | Err(Error::NotFound) => (),
+            Err(error) => panic!("mdb_cursor_get returned an unexpected error: {}", error),
+        };
+        if descending {
+            Iter::new(self.cursor(), ffi::MDB_GET_CURRENT, ffi::MDB_NEXT)
+        } else {
+            Iter::new(self.cursor(), ffi::MDB_GET_CURRENT, ffi::MDB_PREV)
+        }
     }
 
     /// Iterate over duplicate database items. The iterator will begin with the
@@ -449,6 +476,61 @@ mod test {
 
         assert_eq!(vec!().into_iter().collect::<Vec<(&[u8], &[u8])>>(),
                    cursor.iter_from(b"key6").collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_iter_from_end() {
+        let dir = TempDir::new("test").unwrap();
+        let env = Environment::new().open(dir.path()).unwrap();
+        let db = env.open_db(None).unwrap();
+
+        let items: Vec<(&[u8], &[u8])> = vec!((b"key1", b"val1"),
+                                              (b"key2", b"val2"),
+                                              (b"key3", b"val3"),
+                                              (b"key4", b"val4"),
+                                              (b"key5", b"val5"));
+        {
+            let mut txn = env.begin_rw_txn().unwrap();
+            for &(ref key, ref data) in &items {
+                txn.put(db, key, data, WriteFlags::empty()).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        let txn = env.begin_ro_txn().unwrap();
+        let mut cursor = txn.open_ro_cursor(db).unwrap();
+
+        assert_eq!(5, cursor.iter_end().count());
+        assert_eq!(cursor.iter_end().collect::<Vec<(&[u8], &[u8])>>(),
+            items.into_iter().rev().collect::<Vec<(&[u8], &[u8])>>());
+    }
+
+    #[test]
+    fn test_iter_from_given_key_with_direction() {
+        let dir = TempDir::new("test").unwrap();
+        let env = Environment::new().open(dir.path()).unwrap();
+        let db = env.open_db(None).unwrap();
+
+        let items: Vec<(&[u8], &[u8])> = vec!((b"key1", b"val1"),
+                                              (b"key2", b"val2"),
+                                              (b"key3", b"val3"),
+                                              (b"key4", b"val4"),
+                                              (b"key5", b"val5"));
+        {
+            let mut txn = env.begin_rw_txn().unwrap();
+            for &(ref key, ref data) in &items {
+                txn.put(db, key, data, WriteFlags::empty()).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        let txn = env.begin_ro_txn().unwrap();
+        let mut cursor = txn.open_ro_cursor(db).unwrap();
+
+        assert_eq!(4, cursor.iter_from_with_direction(b"key2", true).count());
+        assert_eq!(2, cursor.iter_from_with_direction(b"key2", false).count());
+        assert_eq!(items.into_iter().skip(1).collect::<Vec<(&[u8], &[u8])>>(),
+            cursor.iter_from_with_direction(b"key2", true).collect::<Vec<(&[u8], &[u8])>>());
     }
 
     #[test]
