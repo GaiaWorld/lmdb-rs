@@ -561,6 +561,317 @@ mod test {
     }
 
     #[test]
+    fn test_open_db_m_times() {
+        let dir = TempDir::new("test").unwrap();
+        let env = Arc::new(
+            Environment::new()
+                .set_max_dbs(1024)
+                .set_flags(EnvironmentFlags::NO_TLS)
+                .open(dir.path())
+                .unwrap());
+
+        env.create_db(Some("foo1"), DatabaseFlags::empty()).unwrap();
+        env.create_db(Some("foo1"), DatabaseFlags::empty()).unwrap();
+
+
+        let db1 = env.open_db(Some("foo1")).unwrap();
+        let db2 = env.open_db(Some("foo1")).unwrap();
+        let db3 = env.open_db(Some("foo1")).unwrap();
+
+        println!("db1: {:?}, db2: {:?}, db3: {:?}", db1, db2, db3);
+
+    }
+
+    #[test]
+    fn test_m_reads_n_writes() {
+        let dir = TempDir::new("test").unwrap();
+        let env = Arc::new(
+            Environment::new()
+                .set_max_dbs(1024)
+                .set_flags(EnvironmentFlags::NO_TLS)
+                .open(dir.path())
+                .unwrap());
+
+        let env_clone = env.clone();
+
+        for i in 0..10 {
+            env_clone.create_db(Some(&format!("foo{}", i)), DatabaseFlags::empty()).unwrap();
+        }
+
+        let env2 = env.clone();
+
+        let mut txn = env2.begin_rw_txn().unwrap();
+        
+        for i in 0..10 {
+            let db = env.clone().open_db(Some(&format!("foo{}", i))).unwrap();
+            for j in 0..10 {
+                txn.put(db, &format!("key{}", j), &format!("val{}", j), WriteFlags::empty()).unwrap();
+            }            
+        }
+        assert!(txn.commit().is_ok());
+
+        let env1 = env.clone();
+        let env2 = env.clone();
+        let env3 = env.clone();
+        let env4 = env.clone();
+        let env5 = env.clone();
+
+        let h1 = thread::spawn(move || {
+            println!("writing data in thread 1");
+            let db = env1.open_db(Some("foo1")).unwrap();
+            let mut txn = env1.begin_rw_txn().unwrap();
+            for i in 0..10 {
+                txn.put(db, &format!("key{}", i), &format!("val{}", i), WriteFlags::empty()).is_ok();
+            }
+        });
+
+        let h2 = thread::spawn(move || {
+            println!("writing data in thread 2");
+
+            let db = env2.open_db(Some("foo2")).unwrap();
+            let mut txn = env2.begin_rw_txn().unwrap();
+            for i in 0..10 {
+                txn.put(db, &format!("key{}", i), &format!("val{}", i), WriteFlags::empty()).is_ok();
+            }
+        });
+
+        let h3 = thread::spawn(move || {
+            println!("writing data in thread 3");
+
+            let db = env3.open_db(Some("foo3")).unwrap();
+            let mut txn = env3.begin_rw_txn().unwrap();
+            for i in 0..10 {
+                txn.put(db, &format!("key{}", i), &format!("val{}", i), WriteFlags::empty()).is_ok();
+            }
+        });
+
+        let h4 = thread::spawn(move || {
+            println!("writing data in thread 4");
+
+            let db = env4.open_db(Some("foo4")).unwrap();
+            let mut txn = env4.begin_rw_txn().unwrap();
+            for i in 0..10 {
+                txn.put(db, &format!("key{}", i), &format!("val{}", i), WriteFlags::empty()).is_ok();
+            }
+        });
+
+        let h5 = thread::spawn(move || {
+            println!("reading data in thread 5");
+
+            let db = env5.open_db(Some("foo3")).unwrap();
+            let txn = env5.begin_ro_txn().unwrap();
+            for i in 0..10 {
+                let val = txn.get(db, &format!("key{}", i)).unwrap();
+                assert_eq!(val, format!("val{}", i).as_bytes());
+            }
+        });
+
+        h1.join();
+        h2.join();
+        h3.join();
+        h4.join();
+        h5.join();
+    }
+
+    #[test]
+    fn test_open_many_dbs() {
+        let dir = TempDir::new("test").unwrap();
+        let env = Arc::new(
+            Environment::new()
+                .set_max_dbs(1024)
+                .set_flags(EnvironmentFlags::NO_TLS)
+                .open(dir.path())
+                .unwrap());
+
+        let db = env.create_db(Some("world"), DatabaseFlags::empty()).unwrap();
+        let mut txn = env.begin_rw_txn().unwrap();
+
+        match txn.put(db, b"foo", b"bar", WriteFlags::empty()) {
+            Ok(_) => {
+                println!("write ok111");
+            }
+
+            Err(e) => {
+                println!("write err111: {:?}", e);
+            }
+        }
+        txn.commit();
+
+        let env1 = env.clone();
+        let db1 = db.clone();
+
+        thread::spawn(move || {
+            let txn1 = env1.begin_rw_txn().unwrap();
+            match txn1.get(db1, b"foo") {
+                Ok(v) => println!("get value: {:?}", v),
+                Err(e) => println!("got error: {:?}", e)
+            }
+        });
+
+        thread::sleep_ms(1000);
+    }
+
+    #[test]
+    fn test_foo() {
+        let dir = TempDir::new("test").unwrap();
+        let env = Arc::new(
+            Environment::new()
+                .set_max_dbs(1024)
+                .set_flags(EnvironmentFlags::NO_TLS)
+                .open(dir.path())
+                .unwrap());
+        
+        let env1 = env.clone();
+        let env2 = env.clone();
+
+        let db = env.create_db(Some("hello"), DatabaseFlags::empty()).unwrap();
+
+        thread::spawn(move || {
+            let mut txn = env.begin_rw_txn().unwrap();
+            thread::sleep_ms(2000);
+
+            txn.put(db, b"foo1", b"bar1", WriteFlags::empty());
+            txn.put(db, b"foo2", b"bar2", WriteFlags::empty());
+            txn.put(db, b"foo3", b"bar3", WriteFlags::empty());
+            txn.put(db, b"foo4", b"bar4", WriteFlags::empty());
+
+
+            txn.commit().unwrap();
+        });
+
+        thread::sleep_ms(2000);
+
+        thread::spawn(move || {
+            let txn = env1.begin_ro_txn().unwrap();
+            match txn.get(db, b"foo1") {
+                Ok(v) => println!("val: {:?}", v),
+                Err(e) => println!("err: {:?}", e)
+            }
+
+            thread::sleep_ms(2000);
+            match txn.get(db, b"foo2") {
+                Ok(v) => println!("val: {:?}", v),
+                Err(e) => println!("err: {:?}", e)
+            }
+        });
+
+        thread::spawn(move || {
+            let txn = env2.begin_rw_txn().unwrap();
+            match txn.get(db, b"foo3") {
+                Ok(v) => println!("val: {:?}", v),
+                Err(e) => println!("err: {:?}", e)
+            }
+
+            thread::sleep_ms(2000);
+            match txn.get(db, b"foo4") {
+                Ok(v) => println!("val: {:?}", v),
+                Err(e) => println!("err: {:?}", e)
+            }
+        });
+
+        thread::sleep_ms(11000);
+    }
+
+    #[test]
+    fn test_ro_txn_commit() {
+        let dir = TempDir::new("test").unwrap();
+        let env = Arc::new(
+            Environment::new()
+                .set_max_dbs(1024)
+                .set_flags(EnvironmentFlags::NO_TLS)
+                .open(dir.path())
+                .unwrap());
+
+        let db = env.create_db(Some("world"), DatabaseFlags::empty()).unwrap();
+
+        let db2 = env.create_db(Some("hello"), DatabaseFlags::empty()).unwrap();
+
+        let mut txn = env.begin_rw_txn().unwrap();
+
+        for i in 0..10 {
+            txn.put(db, &format!("key{}", i), &format!("val{}", i), WriteFlags::empty()).unwrap();
+        }
+
+        txn.commit();
+
+        let mut txn1 = env.begin_ro_txn().unwrap();
+        // let cursor = txn1.open_ro_cursor(db).unwrap();
+
+        for i in 0..10 {
+            match txn1.get(db, &format!("key{}", i)) {
+                Ok(v) => {
+                    println!("read value: {:?}", v);
+                }
+
+                Err(e) => {
+                    println!("read error: {:?}", e);
+                }
+            }
+            // std::mem::drop(cursor);
+        }
+
+        txn1.commit();
+        let mut txn2 = env.begin_ro_txn().unwrap();
+        match txn2.get(db, &format!("key1")) {
+            Ok(v) => {
+                println!("read value1111: {:?}", v);
+            }
+
+            Err(e) => {
+                println!("read error1111: {:?}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn write_to_m_dbs() {
+        let dir = TempDir::new("test").unwrap();
+        let env = Arc::new(
+            Environment::new()
+                .set_max_dbs(1024)
+                .set_flags(EnvironmentFlags::NO_TLS)
+                .open(dir.path())
+                .unwrap());
+
+        let env_clone = env.clone();
+
+        for i in 0..10 {
+            env_clone.create_db(Some(&format!("foo{}", i)), DatabaseFlags::empty()).unwrap();
+        }
+
+        let env2 = env.clone();
+
+        let mut txn = env2.begin_rw_txn().unwrap();
+        
+        let mut v = Vec::<u8>::new();
+        v.push(17);
+        println!("{:?}", &v);
+
+        for i in 0..10 {
+            let db = env.clone().open_db(Some(&format!("foo{}", i))).unwrap();
+            for j in 0..10 {
+                txn.put(db, &format!("key{}", j), &format!("val{}", j), WriteFlags::empty()).unwrap();
+                txn.put(db, &v, &format!("val{}", j), WriteFlags::empty()).unwrap();
+            }            
+        }
+        assert!(txn.commit().is_ok());
+
+        let env1 = env.clone();
+
+        let txn = env1.begin_ro_txn().unwrap();
+
+        for i in 0..10 {
+            let db = env.clone().open_db(Some(&format!("foo{}", i))).unwrap();
+            for j in 0..10 {
+                assert_eq!(txn.get(db, &format!("key{}", j)).unwrap(), format!("val{}", j).as_bytes());
+                assert_eq!(txn.get(db, &v).unwrap(), format!("val{}", 9).as_bytes());
+            }
+        }
+
+        txn.commit().is_ok();
+    }
+
+    #[test]
     fn test_concurrent_writers() {
         let dir = TempDir::new("test").unwrap();
         let env = Arc::new(Environment::new().open(dir.path()).unwrap());
@@ -617,7 +928,7 @@ mod test {
 
     #[bench]
     fn bench_get_rand_raw(b: &mut Bencher) {
-        let n = 100u32;
+        let n = 1000000u32;
         let (_dir, env) = setup_bench_db(n);
         let db = env.open_db(None).unwrap();
         let _txn = env.begin_ro_txn().unwrap();
